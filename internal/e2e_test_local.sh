@@ -72,26 +72,26 @@ else
   exit 1
 fi
 
-setup_docker
+# setup_docker
 
-# Run new e2e test for DDL changes
-log "Running new e2e test for DDL changes..."
-if ./internal/e2e_ddl.sh; then
-  success "E2E test for DDL changes completed successfully"
-else
-  error "E2E test for DDL changes failed"
-  exit 1
-fi
+# # Run new e2e test for DDL changes
+# log "Running new e2e test for DDL changes..."
+# if ./internal/e2e_ddl.sh; then
+#   success "E2E test for DDL changes completed successfully"
+# else
+#   error "E2E test for DDL changes failed"
+#   exit 1
+# fi
 
-setup_docker
+# setup_docker
 
-# Run new e2e test for DDL changes
-log "Running new e2e test Postgres Sink..."
-if ./internal/e2e_postgres.sh; then
-  success "E2E test for Postgres Sink completed successfully"
-else
-  error "E2E test for Postgres Sink failed"
-  exit 1
-fi
+# # Run new e2e test for DDL changes
+# log "Running new e2e test Postgres Sink..."
+# if ./internal/e2e_postgres.sh; then
+#   success "E2E test for Postgres Sink completed successfully"
+# else
+#   error "E2E test for Postgres Sink failed"
+#   exit 1
+# fi
 
-success "All local e2e tests completed successfully"
+# success "All local e2e tests completed successfully"

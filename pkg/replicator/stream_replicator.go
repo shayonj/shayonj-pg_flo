@@ -15,11 +15,6 @@ type StreamReplicator struct {
 	DDLReplicator DDLReplicator
 }
 
-// CreatePublication creates a new publication for the specified tables.
-func (r *StreamReplicator) CreatePublication() error {
-	return r.BaseReplicator.CreatePublication()
-}
-
 // StartReplication begins the replication process.
 func (r *StreamReplicator) StartReplication() error {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -30,6 +25,10 @@ func (r *StreamReplicator) StartReplication() error {
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
 	go r.handleShutdownSignal(sigChan, cancel)
+
+	if err := r.BaseReplicator.CreatePublication(); err != nil {
+		return fmt.Errorf("failed to create publication: %v", err)
+	}
 
 	if err := r.BaseReplicator.CreateReplicationSlot(ctx); err != nil {
 		return fmt.Errorf("failed to create replication slot: %v", err)
@@ -54,7 +53,11 @@ func (r *StreamReplicator) StartReplication() error {
 		}
 	}()
 
-	startLSN, err := r.getStartLSN()
+	if err := r.BaseReplicator.CheckReplicationSlotStatus(ctx); err != nil {
+		return fmt.Errorf("failed to check replication slot status: %v", err)
+	}
+
+	startLSN, err := r.getStartLSN(ctx)
 	if err != nil {
 		return err
 	}
@@ -70,12 +73,11 @@ func (r *StreamReplicator) handleShutdownSignal(sigChan <-chan os.Signal, cancel
 	cancel()
 }
 
-// getStartLSN determines the starting LSN for replication. The actual shutdown logic
-// is handled in BaseReplicator.StartReplicationFromLSN
-func (r *StreamReplicator) getStartLSN() (pglogrepl.LSN, error) {
-	startLSN, err := r.Sink.GetLastLSN()
+// getStartLSN determines the starting LSN for replication.
+func (r *StreamReplicator) getStartLSN(ctx context.Context) (pglogrepl.LSN, error) {
+	startLSN, err := r.BaseReplicator.GetLastState(ctx)
 	if err != nil {
-		r.Logger.Warn().Err(err).Msg("Failed to get last LSN from sink, starting from 0")
+		r.Logger.Warn().Err(err).Msg("Failed to get last LSN, starting from 0")
 		return pglogrepl.LSN(0), nil
 	}
 	return startLSN, nil
