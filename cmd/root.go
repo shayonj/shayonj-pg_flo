@@ -106,6 +106,7 @@ func init() {
 	postgresWorkerCmd.Flags().String("postgres-user", "", "Target PostgreSQL user (env: PG_FLO_POSTGRES_USER)")
 	postgresWorkerCmd.Flags().String("postgres-password", "", "Target PostgreSQL password (env: PG_FLO_POSTGRES_PASSWORD)")
 	postgresWorkerCmd.Flags().Bool("postgres-sync-schema", false, "Sync schema from source to target (env: PG_FLO_POSTGRES_SYNC_SCHEMA)")
+	postgresWorkerCmd.Flags().Bool("postgres-disable-foreign-keys", false, "Disable foreign key checks during write (env: PG_FLO_POSTGRES_DISABLE_FOREIGN_KEYS)")
 
 	markFlagRequired(postgresWorkerCmd, "postgres-host", "postgres-dbname", "postgres-user", "postgres-password")
 
@@ -267,6 +268,7 @@ func createSink(sinkType string) (sinks.Sink, error) {
 			viper.GetString("dbname"),
 			viper.GetString("user"),
 			viper.GetString("password"),
+			viper.GetBool("postgres-disable-foreign-keys"),
 		)
 	case "webhook":
 		return sinks.NewWebhookSink(

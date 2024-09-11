@@ -14,13 +14,15 @@ import (
 
 // Worker represents a worker that processes messages from NATS.
 type Worker struct {
-	natsClient *pgflonats.NATSClient
-	ruleEngine *rules.RuleEngine
-	sink       sinks.Sink
-	group      string
-	logger     zerolog.Logger
-	batchSize  int
-	maxRetries int
+	natsClient     *pgflonats.NATSClient
+	ruleEngine     *rules.RuleEngine
+	sink           sinks.Sink
+	group          string
+	logger         zerolog.Logger
+	batchSize      int
+	maxRetries     int
+	buffer         []*utils.CDCMessage
+	lastSavedState uint64
 }
 
 // NewWorker creates and returns a new Worker instance with the provided NATS client, rule engine, sink, and group.
@@ -28,13 +30,15 @@ func NewWorker(natsClient *pgflonats.NATSClient, ruleEngine *rules.RuleEngine, s
 	logger := zerolog.New(zerolog.NewConsoleWriter()).With().Timestamp().Str("component", "worker").Logger()
 
 	return &Worker{
-		natsClient: natsClient,
-		ruleEngine: ruleEngine,
-		sink:       sink,
-		group:      group,
-		logger:     logger,
-		batchSize:  100,
-		maxRetries: 3,
+		natsClient:     natsClient,
+		ruleEngine:     ruleEngine,
+		sink:           sink,
+		group:          group,
+		logger:         logger,
+		batchSize:      1000,
+		maxRetries:     3,
+		buffer:         make([]*utils.CDCMessage, 0, 1000),
+		lastSavedState: 0,
 	}
 }
 
@@ -119,9 +123,13 @@ func (w *Worker) processMessages(ctx context.Context, cons jetstream.Consumer) e
 
 			if err := w.processMessage(msg); err != nil {
 				w.logger.Error().Err(err).Msg("Failed to process message")
-				// Note: OrderedConsumer doesn't support Nak()
 			}
-			// Note: OrderedConsumer doesn't require explicit Ack()
+
+			if len(w.buffer) >= w.batchSize {
+				if err := w.flushBuffer(); err != nil {
+					w.logger.Error().Err(err).Msg("Failed to flush buffer")
+				}
+			}
 		}
 	}
 }
@@ -133,11 +141,6 @@ func (w *Worker) processMessage(msg jetstream.Msg) error {
 		w.logger.Error().Err(err).Msg("Failed to get message metadata")
 		return err
 	}
-
-	w.logger.Debug().
-		Uint64("stream_seq", metadata.Sequence.Stream).
-		Uint64("consumer_seq", metadata.Sequence.Consumer).
-		Msg("Processing message")
 
 	var cdcMessage utils.CDCMessage
 	err = cdcMessage.UnmarshalBinary(msg.Data())
@@ -159,9 +162,20 @@ func (w *Worker) processMessage(msg jetstream.Msg) error {
 		cdcMessage = *processedMessage
 	}
 
-	err = w.sink.WriteBatch([]*utils.CDCMessage{&cdcMessage})
+	w.buffer = append(w.buffer, &cdcMessage)
+	w.lastSavedState = metadata.Sequence.Stream
+
+	return nil
+}
+
+func (w *Worker) flushBuffer() error {
+	if len(w.buffer) == 0 {
+		return nil
+	}
+
+	err := w.sink.WriteBatch(w.buffer)
 	if err != nil {
-		w.logger.Error().Err(err).Msg("Failed to write to sink")
+		w.logger.Error().Err(err).Msg("Failed to write batch to sink")
 		return err
 	}
 
@@ -171,14 +185,12 @@ func (w *Worker) processMessage(msg jetstream.Msg) error {
 		return err
 	}
 
-	if metadata.Sequence.Stream > state.LastProcessedSeq {
-		state.LastProcessedSeq = metadata.Sequence.Stream
-		if err := w.natsClient.SaveState(context.Background(), state); err != nil {
-			w.logger.Error().Err(err).Msg("Failed to save state")
-		} else {
-			w.logger.Debug().Uint64("last_processed_seq", state.LastProcessedSeq).Msg("Updated last processed sequence")
-		}
+	state.LastProcessedSeq = w.lastSavedState
+	if err := w.natsClient.SaveState(context.Background(), state); err != nil {
+		w.logger.Error().Err(err).Msg("Failed to save state")
+		return err
 	}
 
+	w.buffer = w.buffer[:0]
 	return nil
 }
